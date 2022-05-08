@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "d4ft3",
+    "d4ft3-cli",
+]
