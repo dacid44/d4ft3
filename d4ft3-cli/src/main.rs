@@ -1,7 +1,7 @@
 mod cli;
 
 use std::env;
-use d4ft3::{Socket, UnencryptedSocket, TransferMode, D4FTResult};
+use d4ft3::{Socket, UnencryptedSocket, TransferMode, D4FTResult, ChaChaSocket, SocketType};
 use crate::cli::TransferModeOpt;
 
 fn main() -> D4FTResult<()> {
@@ -14,11 +14,20 @@ fn main() -> D4FTResult<()> {
         (false, TransferModeOpt::File(_)) => TransferMode::ReceiveFile,
     };
 
-    let socket = if opts.is_client {
-        UnencryptedSocket::connect(opts.address, mode)?
+    let socket = if let Some(password) = opts.password {
+        SocketType::from(if opts.is_client {
+            ChaChaSocket::connect(opts.address, mode, password)?
+        } else {
+            ChaChaSocket::listen(opts.address, mode, password)?
+        })
     } else {
-        UnencryptedSocket::listen(opts.address, mode)?
+        SocketType::from(if opts.is_client {
+            UnencryptedSocket::connect(opts.address, mode)?
+        } else {
+            UnencryptedSocket::listen(opts.address, mode)?
+        })
     };
+    println!("connected");
 
     match opts.transfer_mode {
         TransferModeOpt::Text(text) => if opts.sending {

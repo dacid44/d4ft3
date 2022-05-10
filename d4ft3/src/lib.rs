@@ -2,7 +2,7 @@ mod socket;
 mod error;
 mod json;
 
-pub use socket::{Socket, UnencryptedSocket};
+pub use socket::{Socket, SocketType, UnencryptedSocket, ChaChaSocket};
 pub use error::{D4FTError, D4FTResult};
 
 #[cfg(test)]

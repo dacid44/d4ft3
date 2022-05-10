@@ -1,5 +1,6 @@
 use std::io;
 use std::str::Utf8Error;
+use chacha20::cipher::StreamCipherError;
 use thiserror::Error;
 
 /// D4FTError represents all possible errors returned by this library.
@@ -52,6 +53,19 @@ pub enum D4FTError {
     /// Emitted when an action was attempted that was not set up for.
     #[error("Invalid action: {msg}")]
     InvalidAction {
+        msg: String,
+    },
+
+    /// Represents an error with a cipher, usually reaching the end of a keystream.
+    #[error("Cipher error")]
+    CipherError {
+        #[from]
+        source: StreamCipherError,
+    },
+
+    /// Represents a failure due to failed encryption/decryption.
+    #[error("Encryption failure: {msg}")]
+    EncryptionFailure {
         msg: String,
     },
 }
