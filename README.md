@@ -5,6 +5,8 @@ This project is my third start on a text and file transfer program, after
 over with the knowledge and hindsight I've gained since starting work on `d4ft2`, and more prior
 planning.
 
+[Docs](https://dacid44.github.io/d4ft3)
+
 ## Overall changes from d4ft2
 - No (or minimal) `extra-options`
 - Files described in a list, rather than a tree. Not a ton of reason to do a tree
