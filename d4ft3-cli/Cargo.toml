@@ -6,3 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+d4ft3 = { path = "../d4ft3" }
+clap = "3.1"
+rpassword = "6.0"
