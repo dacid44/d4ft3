@@ -608,7 +608,6 @@ impl Socket for ChaChaSocket {
     }
 
     fn send_message<T: Serialize>(&self, msg: &T) -> D4FTResult<()> {
-        println!("send message");
         let mut message = build_message(msg)
             .map_err(|source| D4FTError::JsonError { source })?;
         self.enc_cipher.borrow_mut().try_apply_keystream(&mut message)
@@ -618,7 +617,6 @@ impl Socket for ChaChaSocket {
     }
 
     fn receive_message<T: DeserializeOwned>(&self) -> D4FTResult<T> {
-        println!("receive message");
         let mut message = [0_u8; 8];
         self.socket.borrow_mut().read_exact(&mut message)
             .map_err(|source| D4FTError::CommunicationFailure { source })?;

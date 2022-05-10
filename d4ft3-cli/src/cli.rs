@@ -2,6 +2,7 @@ use std::net::ToSocketAddrs;
 use clap::{Arg, ArgMatches, ArgGroup, Command};
 extern crate rpassword;
 use std::path::PathBuf;
+use d4ft3::TransferMode;
 
 pub(crate) fn parse_cli() -> Opts {
     let mut app = Command::new("d4ft3")
@@ -41,7 +42,8 @@ pub(crate) fn parse_cli() -> Opts {
             .long("send")
             .help("Send something to the other device. Conflicts with --receive.")
             .help_heading("ACTION (Choose one)")
-            .display_order(10))
+            .display_order(10)
+            .requires("transfer_mode"))
         .arg(Arg::new("receive")
             .short('r')
             .long("receive")
@@ -59,8 +61,7 @@ pub(crate) fn parse_cli() -> Opts {
             .help_heading("TRANSFER MODE (Choose one)")
             .display_order(20)
             .takes_value(true)
-            .default_missing_value("")
-            .requires_if("", "receive"))
+            .default_missing_value(""))
         .arg(Arg::new("file")
             .short('f')
             .long("file")
@@ -70,11 +71,9 @@ pub(crate) fn parse_cli() -> Opts {
             .help_heading("TRANSFER MODE (Choose one)")
             .display_order(21)
             .takes_value(true)
-            .default_missing_value("")
-            .requires_if("", "receive"))
+            .default_missing_value(""))
         .group(ArgGroup::new("transfer_mode")
-            .args(&["text", "file"])
-            .required(true))
+            .args(&["text", "file"]))
         .arg(Arg::new("password")
             .short('p')
             .long("password")
@@ -105,26 +104,67 @@ pub(crate) fn parse_cli() -> Opts {
             matches.value_of("listen").expect("This value should be present if 'connect' is not present")
         ).expect("This should have already been verified to give Ok()"))
     };
-    let sending = matches.is_present("send");
-    let transfer_mode = if matches.is_present("text") {
-        TransferModeOpt::Text(
-            match matches.value_of("text").expect("We've already checked that this value is present") {
-                "" => None,
-                t => Some(t.to_string()),
-            })
-    } else {
-        TransferModeOpt::File(
-            match matches.value_of("file").expect("This value should be present if 'text' is not present") {
-                "" => None,
+    // let sending = matches.is_present("send");
+    // let transfer_mode = if matches.is_present("text") {
+    //     TransferModeOpt::Text(
+    //         match matches.value_of("text").expect("We've already checked that this value is present") {
+    //             "" => None,
+    //             t => Some(t.to_string()),
+    //         })
+    // } else {
+    //     TransferModeOpt::File(
+    //         match matches.value_of("file").expect("This value should be present if 'text' is not present") {
+    //             "" => None,
+    //             p => {
+    //                 let path = PathBuf::from(p);
+    //                 if !path.exists() {
+    //                     app.error(clap::ErrorKind::InvalidValue, "The specified file does not exist.").exit();
+    //                 }
+    //                 Some(path)
+    //             }
+    //         }
+    //     )
+    // };
+    let mode = match (
+        matches.is_present("send"),
+        matches.is_present("text"),
+        matches.is_present("file")
+    ) {
+        (true, true, false) => TransferModeOpt::SendText(
+            match matches.value_of("text")
+                .expect("We've already checked that this value is present")
+            {
+                "" => app.error(
+                    clap::ErrorKind::EmptyValue,
+                    "Must specify a value for --text if sending",
+                ).exit(),
+                t => t.to_string(),
+            }
+        ),
+        (true, false, true) => TransferModeOpt::SendFile(
+            match matches.value_of("file")
+                .expect("This value should be present if 'text' is not present")
+            {
+                "" => app.error(
+                    clap::ErrorKind::EmptyValue,
+                    "Must specify a value for --file if sending",
+                ).exit(),
                 p => {
                     let path = PathBuf::from(p);
                     if !path.exists() {
-                        app.error(clap::ErrorKind::InvalidValue, "The specified file does not exist.").exit();
+                        app.error(
+                            clap::ErrorKind::ValueValidation,
+                            "The specified file does not exist."
+                        ).exit();
                     }
-                    Some(path)
+                    path
                 }
             }
-        )
+        ),
+        (false, true, false) => TransferModeOpt::ReceiveText,
+        (false, false, true) => TransferModeOpt::ReceiveFile,
+        (false, false, false) => TransferModeOpt::ReceiveEither,
+        _ => unreachable!("All other patterns should be impossible"),
     };
     let password = if matches.is_present("password") {
         match matches.value_of("password") {
@@ -135,23 +175,37 @@ pub(crate) fn parse_cli() -> Opts {
     let attempts = validate_u32(
         matches.value_of("attempts").expect("This value has a default value, so it should always be present.")
     ).expect("This should have already been verified to give Ok()");
-    Opts { is_client, address, sending, transfer_mode, password, attempts }
+    Opts { is_client, address, mode, password, attempts }
 }
 
 #[derive(Debug)]
 pub(crate) struct Opts {
     pub(crate) is_client: bool,
     pub(crate) address: String,
-    pub(crate) sending: bool,
-    pub(crate) transfer_mode: TransferModeOpt,
+    pub(crate) mode: TransferModeOpt,
     pub(crate) password: Option<String>,
     pub(crate) attempts: u32,
 }
 
 #[derive(Debug)]
 pub(crate) enum TransferModeOpt {
-    Text(Option<String>),
-    File(Option<PathBuf>),
+    SendText(String),
+    SendFile(PathBuf),
+    ReceiveText,
+    ReceiveFile,
+    ReceiveEither,
+}
+
+impl From<&TransferModeOpt> for TransferMode {
+    fn from(value: &TransferModeOpt) -> Self {
+        match value {
+            TransferModeOpt::SendText(_) => Self::SendText,
+            TransferModeOpt::SendFile(_) => Self::SendFile,
+            TransferModeOpt::ReceiveText => Self::ReceiveText,
+            TransferModeOpt::ReceiveFile => Self::ReceiveFile,
+            TransferModeOpt::ReceiveEither => Self::ReceiveEither
+        }
+    }
 }
 
 fn validate_dest(v: &str) -> Result<String, String> {

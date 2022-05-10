@@ -7,36 +7,42 @@ use crate::cli::TransferModeOpt;
 fn main() -> D4FTResult<()> {
     let opts = cli::parse_cli();
 
-    let mode = match (&opts.sending, &opts.transfer_mode) {
-        (true, TransferModeOpt::Text(_)) => TransferMode::SendText,
-        (true, TransferModeOpt::File(_)) => TransferMode::SendFile,
-        (false, TransferModeOpt::Text(_)) => TransferMode::ReceiveText,
-        (false, TransferModeOpt::File(_)) => TransferMode::ReceiveFile,
-    };
-
     let socket = if let Some(password) = opts.password {
         SocketType::from(if opts.is_client {
-            ChaChaSocket::connect(opts.address, mode, password)?
+            ChaChaSocket::connect(opts.address, TransferMode::from(&opts.mode), password)?
         } else {
-            ChaChaSocket::listen(opts.address, mode, password)?
+            ChaChaSocket::listen(opts.address, TransferMode::from(&opts.mode), password)?
         })
     } else {
         SocketType::from(if opts.is_client {
-            UnencryptedSocket::connect(opts.address, mode)?
+            UnencryptedSocket::connect(opts.address, TransferMode::from(&opts.mode))?
         } else {
-            UnencryptedSocket::listen(opts.address, mode)?
+            UnencryptedSocket::listen(opts.address, TransferMode::from(&opts.mode))?
         })
     };
     println!("connected");
 
-    match opts.transfer_mode {
-        TransferModeOpt::Text(text) => if opts.sending {
-            socket.send_text(&text.expect("Need text to send"), opts.attempts)?;
-        } else {
+    // match opts.transfer_mode {
+    //     TransferModeOpt::Text(text) => if opts.sending {
+    //         socket.send_text(&text.expect("Need text to send"), opts.attempts)?;
+    //     } else {
+    //         println!("{}", socket.receive_text()?);
+    //     }
+    //     TransferModeOpt::File(_) => {
+    //         unimplemented!("File transfer is not implemented yet.");
+    //     }
+    // }
+    match opts.mode {
+        TransferModeOpt::SendText(text) => {
+            socket.send_text(&text, opts.attempts)?;
+        }
+        TransferModeOpt::SendFile(_) => unimplemented!("File transfer is not implemented yet."),
+        TransferModeOpt::ReceiveText => {
             println!("{}", socket.receive_text()?);
         }
-        TransferModeOpt::File(_) => {
-            unimplemented!("File transfer is not implemented yet.");
+        TransferModeOpt::ReceiveFile => unimplemented!("File transfer is not implemented yet."),
+        TransferModeOpt::ReceiveEither => {
+            println!("{}", socket.receive_text()?);
         }
     }
 

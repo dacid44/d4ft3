@@ -103,6 +103,7 @@ impl TransferSetup {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct TransferSetupResponse {
     confirm: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     mode: Option<BaseTransferMode>,
 }
 
