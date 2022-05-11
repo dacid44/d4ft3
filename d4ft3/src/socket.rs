@@ -527,7 +527,15 @@ impl ChaChaPoly1305Socket {
         socket.send_message(&json::TransferSetup::from(&socket.mode))?;
 
         // Receive transfer setup response
-        let response = socket.receive_message::<json::TransferSetupResponse>()?;
+        let response = socket.receive_message::<json::TransferSetupResponse>();
+
+        // Emit proper error message for failed encryption
+        if let Err(D4FTError::AeadError { .. }) = &response {
+            return Err(D4FTError::EncryptionFailure {
+                msg: "could not understand the listener".to_string()
+            })
+        }
+        let response = response?;
 
         // Close if disagreement
         if !response.verify(&socket.mode) {
