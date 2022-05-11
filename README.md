@@ -17,17 +17,18 @@ planning.
 ## Milestones
 - [x] Two unencrypted sockets talking to each other (print to console)
 - [x] Proper text transfer
-    - [x] encryption setup
-    - [x] transfer mode setup
+  - [x] encryption setup
+  - [x] transfer mode setup
 - [x] Above steps/features, using CLI
-- [ ] Two encrypted sockets talking to each other
-    - [ ] with fixed key
-    - [ ] with password-generated key
+- [x] Two encrypted sockets talking to each other
+  - [x] with fixed key
+  - [x] with password-generated key
+  - [x] with `Poly1305`
 - [ ] Sending file list
-- [ ] Sending empty files
-- [ ] Sending files
-    - [ ] no checks
-    - [ ] checks
+- [ ] Sending one file
+  - [ ] no checks
+  - [ ] checks
+- [ ] Sending multiple files
 
 ## Future goals
 - GUI app

@@ -1,5 +1,5 @@
 use std::net::ToSocketAddrs;
-use clap::{Arg, ArgMatches, ArgGroup, Command};
+use clap::{Arg, ArgGroup, Command};
 extern crate rpassword;
 use std::path::PathBuf;
 use d4ft3::TransferMode;

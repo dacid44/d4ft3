@@ -1,5 +1,6 @@
 //! Contains the struct implementations of the various JSON objects in the protocol.
 
+use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 use crate::TransferMode;
 
@@ -151,4 +152,49 @@ pub(crate) enum SendTextResponse {
     Success,
     Failure,
     Retry,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub(crate) enum FileType {
+    File {
+        path: PathBuf,
+        length: String,
+        hash: Option<String>,
+        verify_immediately: bool,
+        remaining_tries: u32,
+    },
+    Directory {
+        path: PathBuf,
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct FileList {
+    pub(crate) file_list: Vec<FileType>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub(crate) enum MinimalFileType {
+    File {
+        path: PathBuf,
+    },
+    Directory {
+        path: PathBuf,
+    }
+}
+
+impl From<&FileType> for MinimalFileType {
+    fn from(value: &FileType) -> Self {
+        match value {
+            FileType::File { path, .. } => Self::File { path: path.clone() },
+            FileType::Directory { path } => Self::Directory { path: path.clone() },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct FileListResponse {
+    pub(crate) confirm_file_list: Option<Vec<MinimalFileType>>,
 }

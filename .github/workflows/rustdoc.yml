@@ -18,7 +18,7 @@ jobs:
       - name: Install rust
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: nightly
       - name: Build docs
         run: cargo doc --no-deps
       - name: Add redirect index.html

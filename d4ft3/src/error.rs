@@ -63,10 +63,23 @@ pub enum D4FTError {
         source: StreamCipherError,
     },
 
+    /// Represents an error with an AEAD cipher, usually a failed authentication check.
+    #[error("AEAD error")]
+    AeadError {
+        #[from]
+        source: chacha20poly1305::aead::Error,
+    },
+
     /// Represents a failure due to failed encryption/decryption.
     #[error("Encryption failure: {msg}")]
     EncryptionFailure {
         msg: String,
+    },
+
+    /// Represents an error encountered while reading or writing a file.
+    #[error("File I/O error")]
+    FileError {
+        source: io::Error,
     },
 }
 
