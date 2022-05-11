@@ -104,27 +104,7 @@ pub(crate) fn parse_cli() -> Opts {
             matches.value_of("listen").expect("This value should be present if 'connect' is not present")
         ).expect("This should have already been verified to give Ok()"))
     };
-    // let sending = matches.is_present("send");
-    // let transfer_mode = if matches.is_present("text") {
-    //     TransferModeOpt::Text(
-    //         match matches.value_of("text").expect("We've already checked that this value is present") {
-    //             "" => None,
-    //             t => Some(t.to_string()),
-    //         })
-    // } else {
-    //     TransferModeOpt::File(
-    //         match matches.value_of("file").expect("This value should be present if 'text' is not present") {
-    //             "" => None,
-    //             p => {
-    //                 let path = PathBuf::from(p);
-    //                 if !path.exists() {
-    //                     app.error(clap::ErrorKind::InvalidValue, "The specified file does not exist.").exit();
-    //                 }
-    //                 Some(path)
-    //             }
-    //         }
-    //     )
-    // };
+
     let mode = match (
         matches.is_present("send"),
         matches.is_present("text"),
@@ -209,7 +189,7 @@ impl From<&TransferModeOpt> for TransferMode {
 }
 
 fn validate_dest(v: &str) -> Result<String, String> {
-    if v.contains(":") {
+    if v.contains(':') {
         match v.to_socket_addrs() {
             Ok(_) => Ok(v.to_string()),
             Err(_) => Err("Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string()),
@@ -223,7 +203,7 @@ fn validate_dest(v: &str) -> Result<String, String> {
 }
 
 fn validate_bind(v: &str) -> Result<String, String> {
-    if v.contains(":") {
+    if v.contains(':') {
         match v.to_socket_addrs() {
             Ok(_) => Ok(v.to_string()),
             Err(_) => Err("Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string()),

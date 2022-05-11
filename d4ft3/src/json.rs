@@ -28,31 +28,9 @@ pub(crate) enum EncryptionSetup {
     },
 }
 
-// /// Describes the type of encryption used.
-// #[derive(Serialize, Deserialize, Debug)]
-// pub enum EncryptionType {
-//     /// Refer to [EncryptionSetup::Unencrypted]
-//     #[serde(rename = "none")]
-//     None,
-//
-//     /// Refer to [EncryptionSetup::XChaCha20Psk]
-//     #[serde(rename = "xchacha20-psk")]
-//     XChaCha20Psk,
-//
-//     /// Refer to [EncryptionSetup::XChaCha20Poly1305Psk]
-//     #[serde(rename = "xchacha20-poly1305-psk")]
-//     XChaCha20Poly1305Psk
-// }
-//
-// impl Default for EncryptionType {
-//     fn default() -> Self { Self::None }
-// }
-
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct EncryptionSetupResponse {
     pub(crate) confirm: bool,
-    // #[serde(default)]
-    // security: EncryptionType,
 }
 
 /// Describes the mode of transfer (text or file).

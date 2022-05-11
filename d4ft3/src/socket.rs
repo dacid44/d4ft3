@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use chacha20::cipher::{StreamCipher, KeyIvInit};
 use chacha20::XChaCha20;
 use chacha20poly1305::aead::{NewAead, AeadInPlace};
@@ -34,6 +34,113 @@ fn build_message<T: Serialize>(msg: &T) -> Result<Vec<u8>, serde_json::Error> {
     Ok([b"D4FT", &(message.len() as u32).to_be_bytes(), message.as_slice()].concat())
 }
 
+fn derive_key(password: String, salt: [u8; 32]) -> [u8; 32] {
+    let mut key = [0_u8; 32];
+    scrypt(
+        password.as_bytes(),
+        &salt,
+        &scrypt::Params::new(16, 8, 1)
+            .expect("Should not error on hardcoded params"),
+        &mut key,
+    ).expect("Should not error on hardcoded output length");
+    key
+}
+
+fn gen_iv<const NONCE_SIZE: usize>() -> (String, String, [u8; NONCE_SIZE], [u8; 32]) {
+    let mut rng = ChaCha20Rng::from_entropy();
+
+    let mut raw_nonce = [0_u8; NONCE_SIZE];
+    rng.fill_bytes(&mut raw_nonce);
+    let nonce = hex::encode_upper(raw_nonce);
+
+    let mut raw_salt = [0_u8; 32];
+    rng.fill_bytes(&mut raw_salt);
+    let salt = hex::encode_upper(raw_salt);
+
+    (nonce, salt, raw_nonce, raw_salt)
+}
+
+fn check_decode_iv<const SIZE: usize>(iv: String, name: &str) -> D4FTResult<[u8; SIZE]> {
+    hex::decode(iv)
+        .map_err(|_| D4FTError::PacketStructureError {
+            msg: format!("invalid data for {}", name),
+        })?
+        .try_into()
+        .map_err(|_| D4FTError::PacketStructureError {
+            msg: format!("invalid data for {}", name),
+        })
+}
+
+fn start_connect<T: ToSocketAddrs>(
+    address: T,
+    setup: &json::EncryptionSetup
+) -> D4FTResult<TcpStream> {
+    // TODO: Resolve DNS
+    // Connect socket
+    let mut socket = TcpStream::connect(address)
+        .map_err(|source| D4FTError::ConnectionFailure { source })?;
+
+    // Send encryption setup
+    socket.write_all(
+        &build_message(setup).expect("This should be successful"),
+    ).map_err(|source| D4FTError::CommunicationFailure { source })?;
+
+    // Receive encryption setup response
+    let response = serde_json::from_slice::<json::EncryptionSetupResponse>(
+        &read_plaintext_message(&mut socket)?
+    ).map_err(|source| D4FTError::JsonError { source })?;
+
+    // Close if disagreement
+    if !response.confirm {
+        return Err(D4FTError::Disagreement {
+            msg: "The listener refused the connection (likely security types did not match)"
+                .to_string(),
+        });
+    }
+
+    Ok(socket)
+}
+
+fn start_listen<T: ToSocketAddrs, Iv, F: FnOnce(json::EncryptionSetup) -> Option<Iv>> (
+    address: T,
+    iv_extraction_fn: F
+) -> D4FTResult<(TcpStream, Iv)> {
+    // TODO: Resolve DNS
+    // Bind socket
+    let (mut socket, _) = TcpListener::bind(address)
+        .and_then(|l| l.accept())
+        .map_err(|source| D4FTError::ConnectionFailure { source })?;
+
+    // Receive encryption setup
+    let message = serde_json::from_slice::<json::EncryptionSetup>(
+        &read_plaintext_message(&mut socket)?
+    ).map_err(|source| D4FTError::JsonError { source })?;
+
+    // Extract initialization vectors if agreement, respond and close otherwise
+    let iv = match iv_extraction_fn(message) {
+        Some(iv) => {
+            // Respond with agreement if security types match
+            let response = build_message(&json::EncryptionSetupResponse { confirm: true })
+                .expect("This should be completely static");
+            socket.write_all(&response)
+                .map_err(|source| D4FTError::CommunicationFailure { source })?;
+
+            iv
+        }
+        None => {
+            // Respond and close if disagreement
+            let response = build_message(&json::EncryptionSetupResponse { confirm: false })
+                .expect("This should be completely static");
+            socket.write_all(&response)
+                .map_err(|source| D4FTError::CommunicationFailure { source })?;
+
+            return Err(D4FTError::Disagreement { msg: "Security types did not match.".to_string() })
+        }
+    };
+
+    Ok((socket, iv))
+}
+
 pub struct UnencryptedSocket {
     is_client: bool,
     socket: RefCell<TcpStream>,
@@ -43,30 +150,8 @@ pub struct UnencryptedSocket {
 impl UnencryptedSocket {
     /// Connect to a listening peer.
     pub fn connect<T: ToSocketAddrs>(address: T, mode: TransferMode) -> D4FTResult<Self> {
-        // TODO: Resolve DNS
         // Connect socket
-        let mut socket = TcpStream::connect(address)
-            .map_err(|source| D4FTError::ConnectionFailure { source })?;
-
-        // Send encryption setup
-        let message = build_message(&json::EncryptionSetup::Unencrypted)
-            .expect("This should be completely static");
-        socket.write_all(&message)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-        // Receive encryption setup response
-        let response = serde_json::from_slice::<json::EncryptionSetupResponse>(
-            &read_plaintext_message(&mut socket)?
-        )
-            .map_err(|source| D4FTError::JsonError { source })?;
-
-        // Close if disagreement
-        if !response.confirm {
-            return Err(D4FTError::Disagreement {
-                msg: "The listener refused the connection (likely security types did not match)"
-                    .to_string(),
-            });
-        }
+        let mut socket = start_connect(address, &json::EncryptionSetup::Unencrypted)?;
 
         // Send transfer setup
         let message = build_message(&json::TransferSetup::from(&mode))
@@ -92,32 +177,11 @@ impl UnencryptedSocket {
 
     /// Open a port and listen for a connection from a peer.
     pub fn listen<T: ToSocketAddrs>(address: T, mode: TransferMode) -> D4FTResult<Self> {
-            // TODO: Resolve DNS
             // Bind socket
-            let (mut socket, _) = TcpListener::bind(address)
-                .and_then(|l| l.accept())
-                .map_err(|source| D4FTError::ConnectionFailure { source })?;
-
-            // Receive encryption setup
-            let message = serde_json::from_slice::<json::EncryptionSetup>(
-                &read_plaintext_message(&mut socket)?
-            )
-                .map_err(|source| D4FTError::JsonError { source })?;
-            if !matches!(message, json::EncryptionSetup::Unencrypted)  {
-                // Respond and close if disagreement
-                let response = build_message(&json::EncryptionSetupResponse { confirm: false })
-                    .expect("This should be completely static");
-                socket.write_all(&response)
-                    .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-                return Err(D4FTError::Disagreement { msg: "Security types did not match.".to_string()})
-            }
-
-            // Respond with agreement if security types match
-            let response = build_message(&json::EncryptionSetupResponse { confirm: true })
-                .expect("This should be completely static");
-            socket.write_all(&response)
-                .map_err(|source| D4FTError::CommunicationFailure { source })?;
+            let (mut socket, _) = start_listen(address, |setup| match setup {
+                json::EncryptionSetup::Unencrypted => Some(()),
+                _ => None,
+            })?;
 
             // Receive transfer setup
             let message = serde_json::from_slice::<json::TransferSetup>(
@@ -175,235 +239,120 @@ pub struct ChaChaSocket {
 }
 
 impl ChaChaSocket {
+    fn from_iv(
+        is_client: bool,
+        socket: TcpStream,
+        mode: TransferMode,
+        password: String,
+        nonce: [u8; 48],
+        salt: [u8; 32],
+    ) -> Self {
+        // Derive key
+        let key = derive_key(password, salt);
+
+        // Split nonce
+        let mut nonce_halves = [[0_u8; 24]; 2];
+        nonce_halves[0].copy_from_slice(&nonce[..24]);
+        nonce_halves[1].copy_from_slice(&nonce[24..]);
+
+        Self {
+            is_client,
+            socket: RefCell::new(socket),
+            mode,
+            enc_cipher: RefCell::new(XChaCha20::new(
+                chacha20::Key::from_slice(&key),
+                chacha20::XNonce::from_slice(
+                    &if is_client { nonce_halves[0] } else { nonce_halves[1] }),
+            )),
+            dec_cipher: RefCell::new(XChaCha20::new(
+                chacha20::Key::from_slice(&key),
+                chacha20::XNonce::from_slice(
+                    &if is_client { nonce_halves[1] } else { nonce_halves[0] }),
+            )),
+        }
+    }
+
     /// Connect to a listening peer.
     pub fn connect<T: ToSocketAddrs>(address: T, mode: TransferMode, password: String) -> D4FTResult<Self> {
-        // TODO: Resolve DNS
-        // Connect socket
-        let mut socket = TcpStream::connect(address)
-            .map_err(|source| D4FTError::ConnectionFailure { source })?;
-
         // Generate initialization vectors
-        let mut rng = ChaCha20Rng::from_entropy();
+        let (nonce, salt, raw_nonce, raw_salt) = gen_iv();
 
-        let mut raw_nonce = [0_u8; 48];
-        rng.fill_bytes(&mut raw_nonce);
-        let nonce = hex::encode_upper(raw_nonce);
-
-        let mut raw_salt = [0_u8; 32];
-        rng.fill_bytes(&mut raw_salt);
-        let salt = hex::encode_upper(raw_salt);
-
-        // Send encryption setup
-        let message = build_message(&json::EncryptionSetup::XChaCha20Psk { nonce, salt })
-            .expect("This should be successful");
-        socket.write_all(&message)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-        // Receive encryption setup response
-        let response = serde_json::from_slice::<json::EncryptionSetupResponse>(
-            &read_plaintext_message(&mut socket)?
-        )
-            .map_err(|source| D4FTError::JsonError { source })?;
-
-        // Close if disagreement
-        if !response.confirm {
-            return Err(D4FTError::Disagreement {
-                msg: "The listener refused the connection (likely security types did not match)"
-                    .to_string(),
-            });
-        }
+        // Connect socket
+        let socket = start_connect(address, &json::EncryptionSetup::XChaCha20Psk { nonce, salt })?;
 
         // Set up ciphers
-        let mut key = [0_u8; 32];
-        scrypt(
-            password.as_bytes(),
-            &raw_salt,
-            &scrypt::Params::new(16, 8, 1)
-                .expect("Should not error on hardcoded params"),
-            &mut key,
-        ).expect("Should not error on hardcoded output length");
-
-        let mut enc_cipher = XChaCha20::new(
-            chacha20::Key::from_slice(&key),
-            chacha20::XNonce::from_slice(&raw_nonce[..24]),
-        );
-        let mut dec_cipher = XChaCha20::new(
-            chacha20::Key::from_slice(&key),
-            chacha20::XNonce::from_slice(&raw_nonce[24..]),
-        );
+        let socket = Self::from_iv(true, socket, mode, password, raw_nonce, raw_salt);
 
         // Send transfer setup
-        let mut message = build_message(&json::TransferSetup::from(&mode))
-            .expect("This should be completely static");
-        enc_cipher.try_apply_keystream(&mut message)
-            .map_err(|source| D4FTError::CipherError { source })?;
-        socket.write_all(&message)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
+        socket.send_message(&json::TransferSetup::from(&socket.mode))?;
 
         // Receive transfer setup response
-        let mut response = [0_u8; 8];
-        socket.read_exact(&mut response)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
-        dec_cipher.try_apply_keystream(&mut response)
-            .map_err(|source| D4FTError::CipherError { source })?;
-        if &response[0..4] != b"D4FT" {
-            // If encryption failed, close the connection
+        let response = socket.receive_message::<json::TransferSetupResponse>();
+
+        // Emit proper error message for failed encryption
+        if let Err(D4FTError::CipherError { .. }) = &response {
             return Err(D4FTError::EncryptionFailure {
                 msg: "could not understand the listener".to_string()
             })
         }
-        let mut response = vec![
-            0_u8;
-            u32::from_be_bytes(response[4..8].try_into().unwrap()) as usize
-        ];
-        socket.read_exact(&mut response)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
-        dec_cipher.try_apply_keystream(&mut response)
-            .map_err(|source| D4FTError::CipherError { source })?;
-        let response = serde_json::from_slice::<json::TransferSetupResponse>(&response)
-            .map_err(|source| D4FTError::JsonError { source })?;
+        let response = response?;
 
         // Close if disagreement
-        if !response.verify(&mode) {
+        if !response.verify(&socket.mode) {
             return Err(D4FTError::Disagreement {
                 msg: "The listener disagreed on transfer mode".to_string()
             });
         }
 
-        Ok(Self {
-            is_client: true,
-            socket: RefCell::new(socket),
-            mode,
-            enc_cipher: RefCell::new(enc_cipher),
-            dec_cipher: RefCell::new(dec_cipher),
-        })
+        Ok(socket)
     }
 
     /// Open a port and listen for a connection from a peer.
     pub fn listen<T: ToSocketAddrs>(address: T, mode: TransferMode, password: String) -> D4FTResult<Self> {
-        // TODO: Resolve DNS
         // Bind socket
-        let (mut socket, _) = TcpListener::bind(address)
-            .and_then(|l| l.accept())
-            .map_err(|source| D4FTError::ConnectionFailure { source })?;
-
-        // Receive encryption setup
-        let message = serde_json::from_slice::<json::EncryptionSetup>(
-            &read_plaintext_message(&mut socket)?
-        )
-            .map_err(|source| D4FTError::JsonError { source })?;
-
-        // Extract initialization vectors if agreement, respond and close otherwise
-        let (nonce, salt) = if let json::EncryptionSetup::XChaCha20Psk {nonce, salt} = message {
-            // Respond with agreement if security types match
-            let response = build_message(&json::EncryptionSetupResponse { confirm: true })
-                .expect("This should be completely static");
-            socket.write_all(&response)
-                .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-            (nonce, salt)
-        } else {
-            // Respond and close if disagreement
-            let response = build_message(&json::EncryptionSetupResponse { confirm: false })
-                .expect("This should be completely static");
-            socket.write_all(&response)
-                .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-            return Err(D4FTError::Disagreement { msg: "Security types did not match.".to_string() })
-        };
-
-        let raw_nonce = hex::decode(nonce)
-            .map_err(|_| D4FTError::PacketStructureError {
-                msg: "invalid data for nonce".to_string(),
-            })?;
-        if raw_nonce.len() != 48 {
-            return Err(D4FTError::PacketStructureError {
-                msg: "invalid data for nonce".to_string(),
-            })
-        }
-
-        let raw_salt = hex::decode(salt)
-            .map_err(|_| D4FTError::PacketStructureError {
-                msg: "invalid data for salt".to_string(),
-            })?;
-        if raw_salt.len() != 32 {
-            return Err(D4FTError::PacketStructureError {
-                msg: "invalid data for salt".to_string(),
-            })
-        }
+        let (socket, (nonce, salt)) = start_listen(
+            address,
+            |setup| {
+                if let json::EncryptionSetup::XChaCha20Psk { nonce, salt } = setup {
+                    Some((nonce, salt))
+                } else { None }
+            }
+        )?;
 
         // Set up ciphers
-        let mut key = [0_u8; 32];
-        scrypt(
-            password.as_bytes(),
-            &raw_salt,
-            &scrypt::Params::new(16, 8, 1)
-                .expect("Should not error on hardcoded params"),
-            &mut key,
-        ).expect("Should not error on hardcoded output length");
-
-        let mut enc_cipher = XChaCha20::new(
-            chacha20::Key::from_slice(&key),
-            chacha20::XNonce::from_slice(&raw_nonce[24..]),
-        );
-        let mut dec_cipher = XChaCha20::new(
-            chacha20::Key::from_slice(&key),
-            chacha20::XNonce::from_slice(&raw_nonce[..24]),
+        let socket = Self::from_iv(
+            false,
+            socket,
+            mode,
+            password,
+            check_decode_iv(nonce, "nonce")?,
+            check_decode_iv(salt, "salt")?
         );
 
         // Receive transfer setup
-        let mut message = [0_u8; 8];
-        socket.read_exact(&mut message)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
-        dec_cipher.try_apply_keystream(&mut message)
-            .map_err(|source| D4FTError::CipherError { source })?;
-        if &message[0..4] != b"D4FT" {
-            // If encryption failed, send FAILED and close the connection
-            socket.write_all(b"D4FT\x00\x00\x00\x0EFAILED")
+        let message = socket.receive_message::<json::TransferSetup>();
+
+        // If encryption failed, send FAILED and close the connection
+        if let Err(D4FTError::CipherError { .. }) = &message {
+            socket.socket.borrow_mut().write_all(b"D4FT\x00\x00\x00\x0EFAILED")
                 .map_err(|source| D4FTError::CommunicationFailure { source })?;
             return Err(D4FTError::EncryptionFailure {
                 msg: "could not understand the client".to_string()
             })
         }
-        let mut message = vec![
-            0_u8;
-            u32::from_be_bytes(message[4..8].try_into().unwrap()) as usize
-        ];
-        socket.read_exact(&mut message)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
-        dec_cipher.try_apply_keystream(&mut message)
-            .map_err(|source| D4FTError::CipherError { source })?;
-        let message = serde_json::from_slice::<json::TransferSetup>(&message)
-            .map_err(|source| D4FTError::JsonError { source })?;
+        let message = message?;
 
         // If disagreement, close the connection
-        if !message.verify(&mode) {
-            let mut response = build_message(&json::TransferSetupResponse::failure())
-                .expect("This should be completely static");
-            enc_cipher.try_apply_keystream(&mut response)
-                .map_err(|source| D4FTError::CipherError { source })?;
-            socket.write_all(&response)
-                .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
+        if !message.verify(&socket.mode) {
+            socket.send_message(&json::TransferSetupResponse::failure())?;
             return Err(D4FTError::Disagreement {
                 msg: "The client disagreed on transfer mode".to_string()
             });
         }
 
-        let mut response = build_message(&json::TransferSetupResponse::from(&mode))
-            .expect("This should be completely static");
-        enc_cipher.try_apply_keystream(&mut response)
-            .map_err(|source| D4FTError::CipherError { source })?;
-        socket.write_all(&response)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
+        socket.send_message(&json::TransferSetupResponse::from(&socket.mode))?;
 
-        Ok(Self {
-            is_client: false,
-            socket: RefCell::new(socket),
-            mode,
-            enc_cipher: RefCell::new(enc_cipher),
-            dec_cipher: RefCell::new(dec_cipher),
-        })
+        Ok(socket)
     }
 }
 
@@ -457,71 +406,59 @@ pub struct ChaChaPoly1305Socket {
 }
 
 impl ChaChaPoly1305Socket {
-    /// Connect to a listening peer.
-    pub fn connect<T: ToSocketAddrs>(address: T, mode: TransferMode, password: String) -> D4FTResult<Self> {
-        // TODO: Resolve DNS
-        // Connect socket
-        let mut socket = TcpStream::connect(address)
-            .map_err(|source| D4FTError::ConnectionFailure { source })?;
+    fn from_iv(
+        is_client: bool,
+        socket: TcpStream,
+        mode: TransferMode,
+        password: String,
+        nonce: [u8; 40],
+        salt: [u8; 32],
+    ) -> Self {
+        let mut nonce_halves = [[0_u8; 20]; 2];
+        nonce_halves[0].copy_from_slice(&nonce[..20]);
+        nonce_halves[1].copy_from_slice(&nonce[20..]);
 
-        // Generate initialization vectors
-        let mut rng = ChaCha20Rng::from_entropy();
-
-        let mut raw_nonce = [0_u8; 40];
-        rng.fill_bytes(&mut raw_nonce);
-        let nonce = hex::encode_upper(raw_nonce);
-
-        let mut raw_salt = [0_u8; 32];
-        rng.fill_bytes(&mut raw_salt);
-        let salt = hex::encode_upper(raw_salt);
-
-        // Send encryption setup
-        let message = build_message(&json::EncryptionSetup::XChaCha20Poly1305Psk { nonce, salt })
-            .expect("This should be successful");
-        socket.write_all(&message)
-            .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-        // Receive encryption setup response
-        let response = serde_json::from_slice::<json::EncryptionSetupResponse>(
-            &read_plaintext_message(&mut socket)?
-        )
-            .map_err(|source| D4FTError::JsonError { source })?;
-
-        // Close if disagreement
-        if !response.confirm {
-            return Err(D4FTError::Disagreement {
-                msg: "The listener refused the connection (likely security types did not match)"
-                    .to_string(),
-            });
-        }
-
-        // Set up ciphers
-        let mut key = [0_u8; 32];
-        scrypt(
-            password.as_bytes(),
-            &raw_salt,
-            &scrypt::Params::new(16, 8, 1)
-                .expect("Should not error on hardcoded params"),
-            &mut key,
-        ).expect("Should not error on hardcoded output length");
-
-        let mut enc_nonce_base = [0_u8; 20];
-        enc_nonce_base.copy_from_slice(&raw_nonce[..20]);
-        let mut dec_nonce_base = [0_u8; 20];
-        dec_nonce_base.copy_from_slice(&raw_nonce[20..]);
-
-        let socket = Self {
-            is_client: true,
+        Self {
+            is_client,
             socket: RefCell::new(socket),
             mode,
-            enc_nonce_base,
-            dec_nonce_base,
+            enc_nonce_base: if is_client { nonce_halves[0] } else { nonce_halves[1] },
+            dec_nonce_base: if is_client { nonce_halves[1] } else { nonce_halves[0] },
             enc_nonce_counter: RefCell::new(0),
             dec_nonce_counter: RefCell::new(0),
             cipher: XChaCha20Poly1305::new(
-                chacha20poly1305::Key::from_slice(&key),
+                chacha20poly1305::Key::from_slice(&derive_key(password, salt)),
             ),
-        };
+        }
+    }
+
+    fn next_enc_nonce(&self) -> [u8; 24] {
+        let mut nonce = [0_u8; 24];
+        nonce[..4].copy_from_slice(&self.enc_nonce_counter.borrow().to_be_bytes());
+        nonce[4..].copy_from_slice(&self.enc_nonce_base);
+        *self.enc_nonce_counter.borrow_mut() += 1;
+        nonce
+    }
+
+    fn next_dec_nonce(&self) -> [u8; 24] {
+        let mut nonce = [0_u8; 24];
+        nonce[..4].copy_from_slice(&self.dec_nonce_counter.borrow().to_be_bytes());
+        nonce[4..].copy_from_slice(&self.dec_nonce_base);
+        *self.dec_nonce_counter.borrow_mut() += 1;
+        nonce
+    }
+
+    /// Connect to a listening peer.
+    pub fn connect<T: ToSocketAddrs>(address: T, mode: TransferMode, password: String) -> D4FTResult<Self> {
+        // Generate initialization vectors
+        let (nonce, salt, raw_nonce, raw_salt) = gen_iv();
+
+        // Connect socket
+        let socket = start_connect(address,
+                                    &json::EncryptionSetup::XChaCha20Poly1305Psk { nonce, salt })?;
+
+        // Set up ciphers
+        let socket = Self::from_iv(true, socket, mode, password, raw_nonce, raw_salt);
 
         // Send transfer setup
         socket.send_message(&json::TransferSetup::from(&socket.mode))?;
@@ -548,87 +485,25 @@ impl ChaChaPoly1305Socket {
     }
 
     pub fn listen<T: ToSocketAddrs>(address: T, mode: TransferMode, password: String) -> D4FTResult<Self> {
-        // TODO: Resolve DNS
         // Bind socket
-        let (mut socket, _) = TcpListener::bind(address)
-            .and_then(|l| l.accept())
-            .map_err(|source| D4FTError::ConnectionFailure { source })?;
-
-        // Receive encryption setup
-        let message = serde_json::from_slice::<json::EncryptionSetup>(
-            &read_plaintext_message(&mut socket)?
-        )
-            .map_err(|source| D4FTError::JsonError { source })?;
-
-        // Extract initialization vectors if agreement, respond and close otherwise
-        let (nonce, salt) = if let json::EncryptionSetup::XChaCha20Poly1305Psk {
-            nonce,
-            salt,
-        } = message {
-            // Respond with agreement if security types match
-            let response = build_message(&json::EncryptionSetupResponse { confirm: true })
-                .expect("This should be completely static");
-            socket.write_all(&response)
-                .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-            (nonce, salt)
-        } else {
-            // Respond and close if disagreement
-            let response = build_message(&json::EncryptionSetupResponse { confirm: false })
-                .expect("This should be completely static");
-            socket.write_all(&response)
-                .map_err(|source| D4FTError::CommunicationFailure { source })?;
-
-            return Err(D4FTError::Disagreement { msg: "Security types did not match.".to_string() })
-        };
-
-        let raw_nonce = hex::decode(nonce)
-            .map_err(|_| D4FTError::PacketStructureError {
-                msg: "invalid data for nonce".to_string(),
-            })?;
-        if raw_nonce.len() != 40 {
-            return Err(D4FTError::PacketStructureError {
-                msg: "invalid data for nonce".to_string(),
-            })
-        }
-
-        let raw_salt = hex::decode(salt)
-            .map_err(|_| D4FTError::PacketStructureError {
-                msg: "invalid data for salt".to_string(),
-            })?;
-        if raw_salt.len() != 32 {
-            return Err(D4FTError::PacketStructureError {
-                msg: "invalid data for salt".to_string(),
-            })
-        }
+        let (socket, (nonce, salt)) = start_listen(
+            address,
+            |setup| {
+                if let json::EncryptionSetup::XChaCha20Poly1305Psk { nonce, salt } = setup {
+                    Some((nonce, salt))
+                } else { None }
+            }
+        )?;
 
         // Set up ciphers
-        let mut key = [0_u8; 32];
-        scrypt(
-            password.as_bytes(),
-            &raw_salt,
-            &scrypt::Params::new(16, 8, 1)
-                .expect("Should not error on hardcoded params"),
-            &mut key,
-        ).expect("Should not error on hardcoded output length");
-
-        let mut enc_nonce_base = [0_u8; 20];
-        enc_nonce_base.copy_from_slice(&raw_nonce[20..]);
-        let mut dec_nonce_base = [0_u8; 20];
-        dec_nonce_base.copy_from_slice(&raw_nonce[..20]);
-
-        let socket = Self {
-            is_client: false,
-            socket: RefCell::new(socket),
+        let socket = Self::from_iv(
+            false,
+            socket,
             mode,
-            enc_nonce_base,
-            dec_nonce_base,
-            enc_nonce_counter: RefCell::new(0),
-            dec_nonce_counter: RefCell::new(0),
-            cipher: XChaCha20Poly1305::new(
-                chacha20poly1305::Key::from_slice(&key),
-            ),
-        };
+            password,
+            check_decode_iv(nonce, "nonce")?,
+            check_decode_iv(salt, "salt")?,
+        );
 
         // Receive transfer setup
         let message = socket.receive_message::<json::TransferSetup>();
@@ -655,22 +530,6 @@ impl ChaChaPoly1305Socket {
         socket.send_message(&json::TransferSetupResponse::from(&socket.mode))?;
 
         Ok(socket)
-    }
-
-    fn next_enc_nonce(&self) -> [u8; 24] {
-        let mut nonce = [0_u8; 24];
-        nonce[..4].copy_from_slice(&self.enc_nonce_counter.borrow().to_be_bytes());
-        nonce[4..].copy_from_slice(&self.enc_nonce_base);
-        *self.enc_nonce_counter.borrow_mut() += 1;
-        nonce
-    }
-
-    fn next_dec_nonce(&self) -> [u8; 24] {
-        let mut nonce = [0_u8; 24];
-        nonce[..4].copy_from_slice(&self.dec_nonce_counter.borrow().to_be_bytes());
-        nonce[4..].copy_from_slice(&self.dec_nonce_base);
-        *self.dec_nonce_counter.borrow_mut() += 1;
-        nonce
     }
 }
 

@@ -21,16 +21,6 @@ fn main() -> D4FTResult<()> {
     };
     println!("connected");
 
-    // match opts.transfer_mode {
-    //     TransferModeOpt::Text(text) => if opts.sending {
-    //         socket.send_text(&text.expect("Need text to send"), opts.attempts)?;
-    //     } else {
-    //         println!("{}", socket.receive_text()?);
-    //     }
-    //     TransferModeOpt::File(_) => {
-    //         unimplemented!("File transfer is not implemented yet.");
-    //     }
-    // }
     match opts.mode {
         TransferModeOpt::SendText(text) => {
             socket.send_text(&text, opts.attempts)?;
@@ -50,28 +40,4 @@ fn main() -> D4FTResult<()> {
     }
 
     Ok(())
-
-    // let args: Vec<String> = env::args().collect();
-    // if args.len() > 1 {
-    //     let socket = UnencryptedSocket::connect(
-    //         "127.0.0.1",
-    //         2581,
-    //         TransferMode::SendText,
-    //     ).unwrap();
-    //     loop {
-    //         let mut input = String::new();
-    //         println!("Message: ");
-    //         std::io::stdin().read_line(&mut input).unwrap();
-    //         socket.send_text(&input, 3);
-    //     }
-    // } else {
-    //     let socket = UnencryptedSocket::listen(
-    //         "127.0.0.1",
-    //         2581,
-    //         TransferMode::ReceiveText,
-    //     ).unwrap();
-    //     loop {
-    //         println!("{}", socket.receive_text().unwrap());
-    //     }
-    // }
 }
