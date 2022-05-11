@@ -62,7 +62,6 @@ impl UnencryptedSocket {
 
         // Close if disagreement
         if !response.confirm {
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The listener refused the connection (likely security types did not match)"
                     .to_string(),
@@ -83,7 +82,6 @@ impl UnencryptedSocket {
 
         // Close if disagreement
         if !response.verify(&mode) {
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The listener disagreed on transfer mode".to_string()
             });
@@ -112,7 +110,6 @@ impl UnencryptedSocket {
                 socket.write_all(&response)
                     .map_err(|source| D4FTError::CommunicationFailure { source })?;
 
-                socket.shutdown(Shutdown::Both);
                 return Err(D4FTError::Disagreement { msg: "Security types did not match.".to_string()})
             }
 
@@ -135,7 +132,6 @@ impl UnencryptedSocket {
                 socket.write_all(&response)
                     .map_err(|source| D4FTError::CommunicationFailure { source })?;
 
-                socket.shutdown(Shutdown::Both);
                 return Err(D4FTError::Disagreement {
                     msg: "The client disagreed on transfer mode".to_string()
                 });
@@ -211,7 +207,6 @@ impl ChaChaSocket {
 
         // Close if disagreement
         if !response.confirm {
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The listener refused the connection (likely security types did not match)"
                     .to_string(),
@@ -253,7 +248,6 @@ impl ChaChaSocket {
             .map_err(|source| D4FTError::CipherError { source })?;
         if &response[0..4] != b"D4FT" {
             // If encryption failed, close the connection
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::EncryptionFailure {
                 msg: "could not understand the listener".to_string()
             })
@@ -271,7 +265,6 @@ impl ChaChaSocket {
 
         // Close if disagreement
         if !response.verify(&mode) {
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The listener disagreed on transfer mode".to_string()
             });
@@ -316,7 +309,6 @@ impl ChaChaSocket {
             socket.write_all(&response)
                 .map_err(|source| D4FTError::CommunicationFailure { source })?;
 
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement { msg: "Security types did not match.".to_string() })
         };
 
@@ -369,7 +361,6 @@ impl ChaChaSocket {
             // If encryption failed, send FAILED and close the connection
             socket.write_all(b"D4FT\x00\x00\x00\x0EFAILED")
                 .map_err(|source| D4FTError::CommunicationFailure { source })?;
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::EncryptionFailure {
                 msg: "could not understand the client".to_string()
             })
@@ -394,7 +385,6 @@ impl ChaChaSocket {
             socket.write_all(&response)
                 .map_err(|source| D4FTError::CommunicationFailure { source })?;
 
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The client disagreed on transfer mode".to_string()
             });
@@ -499,7 +489,6 @@ impl ChaChaPoly1305Socket {
 
         // Close if disagreement
         if !response.confirm {
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The listener refused the connection (likely security types did not match)"
                     .to_string(),
@@ -542,7 +531,6 @@ impl ChaChaPoly1305Socket {
 
         // Close if disagreement
         if !response.verify(&socket.mode) {
-            socket.socket.borrow_mut().shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The listener disagreed on transfer mode".to_string()
             });
@@ -583,7 +571,6 @@ impl ChaChaPoly1305Socket {
             socket.write_all(&response)
                 .map_err(|source| D4FTError::CommunicationFailure { source })?;
 
-            socket.shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement { msg: "Security types did not match.".to_string() })
         };
 
@@ -640,10 +627,9 @@ impl ChaChaPoly1305Socket {
 
         // If encryption failed, send FAILED and close the connection
         if let Err(D4FTError::AeadError { .. }) = &message {
-            socket.socket.borrow_mut().write_all(b"D4FT\x00\x00\x00\x0EFAILED")
-                .map_err(|source| D4FTError::CommunicationFailure { source })?;
-            // TODO: Remove the shutdown call since it's done automatically
-            socket.socket.borrow_mut().shutdown(Shutdown::Both);
+            socket.socket.borrow_mut().write_all(
+                b"D4FT\x00\x00\x00\x0E                FAILED                "
+            ).map_err(|source| D4FTError::CommunicationFailure { source })?;
             return Err(D4FTError::EncryptionFailure {
                 msg: "could not understand the client".to_string()
             })
@@ -653,8 +639,6 @@ impl ChaChaPoly1305Socket {
         // If disagreement, close the connection
         if !message.verify(&socket.mode) {
             socket.send_message(&json::TransferSetupResponse::failure())?;
-            // TODO: Remove the shutdown call since it's done automatically
-            socket.socket.borrow_mut().shutdown(Shutdown::Both);
             return Err(D4FTError::Disagreement {
                 msg: "The client disagreed on transfer mode".to_string()
             });
