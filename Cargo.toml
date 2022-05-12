@@ -1,6 +1,8 @@
 [workspace]
-
 members = [
     "d4ft3",
     "d4ft3-cli",
+    "d4ft3-ffi",
+    "d4ft3-gui",
 ]
+default-members = ["d4ft3-cli"]

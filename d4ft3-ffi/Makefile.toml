@@ -1,0 +1,28 @@
+[tasks.build-android]
+install_crate = "cargo-ndk"
+command = "cargo"
+args = [
+    "ndk",
+    "-t", "armeabi-v7a",
+    "-t", "arm64-v8a",
+    "-o", "../d4ft3_gui_flutter/packages/d4ft3_ffi/android/src/main/jniLibs",
+    "build", "--release",
+]
+
+[tasks.build-native]
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.clean]
+command = "cargo"
+args = ["clean"]
+
+[tasks.build-libs]
+dependencies = [
+    "build-android",
+    "build-native",
+]
+
+[tasks.default]
+clear = true
+dependencies = ["build-libs"]

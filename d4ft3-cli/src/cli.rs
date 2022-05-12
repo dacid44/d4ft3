@@ -1,8 +1,8 @@
-use std::net::ToSocketAddrs;
 use clap::{Arg, ArgGroup, Command};
+use std::net::ToSocketAddrs;
 extern crate rpassword;
-use std::path::PathBuf;
 use d4ft3::TransferMode;
+use std::path::PathBuf;
 
 pub(crate) fn parse_cli() -> Opts {
     let mut app = Command::new("d4ft3")
@@ -96,50 +96,69 @@ pub(crate) fn parse_cli() -> Opts {
     let matches = app.get_matches_mut();
 
     let (is_client, address) = if matches.is_present("connect") {
-        (true, validate_dest(
-            matches.value_of("connect").expect("We've already checked that this value is present")
-        ).expect("This should have already been verified to give Ok()"))
+        (
+            true,
+            validate_dest(
+                matches
+                    .value_of("connect")
+                    .expect("We've already checked that this value is present"),
+            )
+            .expect("This should have already been verified to give Ok()"),
+        )
     } else {
-        (false, validate_bind(
-            matches.value_of("listen").expect("This value should be present if 'connect' is not present")
-        ).expect("This should have already been verified to give Ok()"))
+        (
+            false,
+            validate_bind(
+                matches
+                    .value_of("listen")
+                    .expect("This value should be present if 'connect' is not present"),
+            )
+            .expect("This should have already been verified to give Ok()"),
+        )
     };
 
     let mode = match (
         matches.is_present("send"),
         matches.is_present("text"),
-        matches.is_present("file")
+        matches.is_present("file"),
     ) {
         (true, true, false) => TransferModeOpt::SendText(
-            match matches.value_of("text")
+            match matches
+                .value_of("text")
                 .expect("We've already checked that this value is present")
             {
-                "" => app.error(
-                    clap::ErrorKind::EmptyValue,
-                    "Must specify a value for --text if sending",
-                ).exit(),
+                "" => app
+                    .error(
+                        clap::ErrorKind::EmptyValue,
+                        "Must specify a value for --text if sending",
+                    )
+                    .exit(),
                 t => t.to_string(),
-            }
+            },
         ),
         (true, false, true) => TransferModeOpt::SendFile(
-            match matches.value_of("file")
+            match matches
+                .value_of("file")
                 .expect("This value should be present if 'text' is not present")
             {
-                "" => app.error(
-                    clap::ErrorKind::EmptyValue,
-                    "Must specify a value for --file if sending",
-                ).exit(),
+                "" => app
+                    .error(
+                        clap::ErrorKind::EmptyValue,
+                        "Must specify a value for --file if sending",
+                    )
+                    .exit(),
                 p => {
                     let path = PathBuf::from(p);
                     if !path.exists() {
                         app.error(
                             clap::ErrorKind::ValueValidation,
-                            "The specified file does not exist."
-                        ).exit();
+                            "The specified file does not exist.",
+                        )
+                        .exit();
                     }
                     path
                 }
-            }
+            },
         ),
         (false, true, false) => TransferModeOpt::ReceiveText,
         (false, false, true) => TransferModeOpt::ReceiveFile,
@@ -149,13 +168,26 @@ pub(crate) fn parse_cli() -> Opts {
     let password = if matches.is_present("password") {
         match matches.value_of("password") {
             Some(p) => Some(p.to_string()),
-            None => Some(rpassword::prompt_password("Password: ").expect("Error prompting for password")),
+            None => Some(
+                rpassword::prompt_password("Password: ").expect("Error prompting for password"),
+            ),
         }
-    } else { None };
+    } else {
+        None
+    };
     let attempts = validate_u32(
-        matches.value_of("attempts").expect("This value has a default value, so it should always be present.")
-    ).expect("This should have already been verified to give Ok()");
-    Opts { is_client, address, mode, password, attempts }
+        matches
+            .value_of("attempts")
+            .expect("This value has a default value, so it should always be present."),
+    )
+    .expect("This should have already been verified to give Ok()");
+    Opts {
+        is_client,
+        address,
+        mode,
+        password,
+        attempts,
+    }
 }
 
 #[derive(Debug)]
@@ -183,7 +215,7 @@ impl From<&TransferModeOpt> for TransferMode {
             TransferModeOpt::SendFile(_) => Self::SendFile,
             TransferModeOpt::ReceiveText => Self::ReceiveText,
             TransferModeOpt::ReceiveFile => Self::ReceiveFile,
-            TransferModeOpt::ReceiveEither => Self::ReceiveEither
+            TransferModeOpt::ReceiveEither => Self::ReceiveEither,
         }
     }
 }
@@ -192,12 +224,16 @@ fn validate_dest(v: &str) -> Result<String, String> {
     if v.contains(':') {
         match v.to_socket_addrs() {
             Ok(_) => Ok(v.to_string()),
-            Err(_) => Err("Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string()),
+            Err(_) => Err(
+                "Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string(),
+            ),
         }
     } else {
         match format!("{}:2581", v).to_socket_addrs() {
             Ok(_) => Ok(format!("{}:2581", v)),
-            Err(_) =>  Err("Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string()),
+            Err(_) => Err(
+                "Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string(),
+            ),
         }
     }
 }
@@ -206,14 +242,19 @@ fn validate_bind(v: &str) -> Result<String, String> {
     if v.contains(':') {
         match v.to_socket_addrs() {
             Ok(_) => Ok(v.to_string()),
-            Err(_) => Err("Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string()),
+            Err(_) => Err(
+                "Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string(),
+            ),
         }
     } else {
         match v.parse::<u16>() {
             Ok(_) => Ok(v.to_string()),
             Err(_) => match format!("{}:2581", v).to_socket_addrs() {
                 Ok(_) => Ok(format!("{}:2581", v)),
-                Err(_) => Err("Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT".to_string()),
+                Err(_) => Err(
+                    "Invalid ADDRESS: must be of the form ADDRESS, PORT, or ADDRESS:PORT"
+                        .to_string(),
+                ),
             },
         }
     }

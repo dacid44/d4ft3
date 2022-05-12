@@ -1,0 +1,14 @@
+[package]
+name = "d4ft3-ffi"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "d4ft3_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+d4ft3 = { path = "../d4ft3" }
+libc = "0.2"

@@ -1,8 +1,8 @@
 //! Contains the struct implementations of the various JSON objects in the protocol.
 
-use std::path::PathBuf;
-use serde::{Serialize, Deserialize};
 use crate::TransferMode;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// The first message sent by the client, designating which encryption type to use and the
 /// initialization vectors.
@@ -15,17 +15,11 @@ pub(crate) enum EncryptionSetup {
 
     /// XChaCha20 encryption with passkey-derived key
     #[serde(rename = "xchacha20-psk")]
-    XChaCha20Psk {
-        nonce: String,
-        salt: String,
-    },
+    XChaCha20Psk { nonce: String, salt: String },
 
     /// XChaCha20-Poly1305 encryption with passkey-derived key
     #[serde(rename = "xchacha20-poly1305-psk")]
-    XChaCha20Poly1305Psk {
-        nonce: String,
-        salt: String,
-    },
+    XChaCha20Poly1305Psk { nonce: String, salt: String },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -57,10 +51,9 @@ impl From<&TransferMode> for TransferSetup {
             TransferMode::SendFile => Self::Sending(BaseTransferMode::File),
             TransferMode::ReceiveText => Self::Receiving(vec![BaseTransferMode::Text]),
             TransferMode::ReceiveFile => Self::Receiving(vec![BaseTransferMode::File]),
-            TransferMode::ReceiveEither => Self::Receiving(vec![
-                BaseTransferMode::Text,
-                BaseTransferMode::File,
-            ]),
+            TransferMode::ReceiveEither => {
+                Self::Receiving(vec![BaseTransferMode::Text, BaseTransferMode::File])
+            }
         }
     }
 }
@@ -70,10 +63,13 @@ impl TransferSetup {
         match self {
             Self::Sending(BaseTransferMode::Text) if !mode.is_sending() && mode.is_text() => true,
             Self::Sending(BaseTransferMode::File) if !mode.is_sending() && mode.is_file() => true,
-            Self::Receiving(x) if mode.is_sending() && (
-                (mode.is_text() && x.contains(&BaseTransferMode::Text))
-                || (mode.is_file() && x.contains(&BaseTransferMode::File))
-            ) => true,
+            Self::Receiving(x)
+                if mode.is_sending()
+                    && ((mode.is_text() && x.contains(&BaseTransferMode::Text))
+                        || (mode.is_file() && x.contains(&BaseTransferMode::File))) =>
+            {
+                true
+            }
             _ => false,
         }
     }
@@ -88,18 +84,26 @@ pub(crate) struct TransferSetupResponse {
 
 impl TransferSetupResponse {
     pub(crate) fn failure() -> Self {
-        Self { confirm: false, mode: None }
+        Self {
+            confirm: false,
+            mode: None,
+        }
     }
 
     pub(crate) fn verify(&self, mode: &TransferMode) -> bool {
-        self.confirm && match (&self.mode, mode) {
-            (Some(BaseTransferMode::Text),
-                TransferMode::ReceiveText | TransferMode::ReceiveEither) => true,
-            (Some(BaseTransferMode::File),
-                TransferMode::ReceiveFile | TransferMode::ReceiveEither) => true,
-            (None, TransferMode::SendText | TransferMode::SendFile) => true,
-            _ => false,
-        }
+        self.confirm
+            && match (&self.mode, mode) {
+                (
+                    Some(BaseTransferMode::Text),
+                    TransferMode::ReceiveText | TransferMode::ReceiveEither,
+                ) => true,
+                (
+                    Some(BaseTransferMode::File),
+                    TransferMode::ReceiveFile | TransferMode::ReceiveEither,
+                ) => true,
+                (None, TransferMode::SendText | TransferMode::SendFile) => true,
+                _ => false,
+            }
     }
 }
 
@@ -144,7 +148,7 @@ pub(crate) enum FileType {
     },
     Directory {
         path: PathBuf,
-    }
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -155,12 +159,8 @@ pub(crate) struct FileList {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum MinimalFileType {
-    File {
-        path: PathBuf,
-    },
-    Directory {
-        path: PathBuf,
-    }
+    File { path: PathBuf },
+    Directory { path: PathBuf },
 }
 
 impl From<&FileType> for MinimalFileType {

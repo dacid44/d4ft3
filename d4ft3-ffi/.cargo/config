@@ -1,0 +1,8 @@
+[build]
+#target-dir = "../d4ft3_gui_flutter/packages/d4ft3_ffi/android/src/main/jniLibs"
+
+#[target.aarch64-linux-android]
+#target-dir = "../d4ft3_gui_flutter/packages/d4ft3_ffi/android/src/main/jniLibs"
+
+#[target.arm-linux-androideabi]
+#target-dir = "../d4ft3_gui_flutter/packages/d4ft3_ffi/android/src/main/jniLibs"

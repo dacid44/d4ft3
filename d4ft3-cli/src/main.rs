@@ -1,7 +1,10 @@
 mod cli;
 
-use d4ft3::{Connection, UnencryptedSocket, TransferMode, D4FTResult, ChaChaSocket, ConnectionType, ChaChaPoly1305Socket};
 use crate::cli::TransferModeOpt;
+use d4ft3::{
+    ChaChaPoly1305Socket, ChaChaSocket, Connection, ConnectionType, D4FTResult, TransferMode,
+    UnencryptedSocket,
+};
 
 fn main() -> D4FTResult<()> {
     let opts = cli::parse_cli();

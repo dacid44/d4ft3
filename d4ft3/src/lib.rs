@@ -1,18 +1,18 @@
 #![feature(io_error_more)]
 
-mod socket;
 mod error;
 mod json;
+mod socket;
 
-use std::io;
-use std::fs::File;
-use std::path::PathBuf;
+use enum_dispatch::enum_dispatch;
+pub use error::{D4FTError, D4FTResult};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use enum_dispatch::enum_dispatch;
-pub use socket::{UnencryptedSocket, ChaChaSocket, ChaChaPoly1305Socket};
-pub use error::{D4FTError, D4FTResult};
+pub use socket::{ChaChaPoly1305Socket, ChaChaSocket, UnencryptedSocket};
+use std::fs::File;
+use std::io;
+use std::path::PathBuf;
 
 #[cfg(test)]
 mod tests {
@@ -39,11 +39,17 @@ impl TransferMode {
     }
 
     fn is_text(&self) -> bool {
-        matches!(self, Self::SendText | Self::ReceiveText | Self::ReceiveEither)
+        matches!(
+            self,
+            Self::SendText | Self::ReceiveText | Self::ReceiveEither
+        )
     }
 
     fn is_file(&self) -> bool {
-        matches!(self, Self::SendFile | Self::ReceiveFile | Self::ReceiveEither)
+        matches!(
+            self,
+            Self::SendFile | Self::ReceiveFile | Self::ReceiveEither
+        )
     }
 }
 
@@ -73,15 +79,11 @@ pub trait Connection {
     fn send_text(&self, text: &str, retries: u32) -> D4FTResult<()> {
         if !matches!(self.transfer_mode(), TransferMode::SendText) {
             return Err(D4FTError::InvalidAction {
-                msg: "Attempted to send text when this socket was not set up to do so."
-                    .to_string(),
-            })
+                msg: "Attempted to send text when this socket was not set up to do so.".to_string(),
+            });
         }
 
-        let hash = hex::encode_upper(
-            sha2::Sha256::new_with_prefix(text.as_bytes())
-                .finalize()
-        );
+        let hash = hex::encode_upper(sha2::Sha256::new_with_prefix(text.as_bytes()).finalize());
         let mut retries = retries;
 
         loop {
@@ -92,7 +94,9 @@ pub trait Connection {
             })?;
             let response = self.receive_message::<json::SendTextResponse>()?;
             match response {
-                json::SendTextResponse::Success => { break Ok(()); }
+                json::SendTextResponse::Success => {
+                    break Ok(());
+                }
                 json::SendTextResponse::Failure => {
                     break Err(D4FTError::TransmissionFailure {
                         msg: "Transmission failure and out of retries.".to_string(),
@@ -119,15 +123,14 @@ pub trait Connection {
             return Err(D4FTError::InvalidAction {
                 msg: "Attempted to receive text when this socket was not set up to do so."
                     .to_string(),
-            })
+            });
         }
 
         loop {
             let message = self.receive_message::<json::SendText>()?;
 
             let hash = hex::encode_upper(
-                sha2::Sha256::new_with_prefix(message.text.as_bytes())
-                    .finalize()
+                sha2::Sha256::new_with_prefix(message.text.as_bytes()).finalize(),
             );
             if message.hash == hash {
                 self.send_message(&json::SendTextResponse::Success)?;
@@ -151,28 +154,32 @@ pub trait Connection {
     /// * `path` - The path of the file to send
     /// * `retries` - The number of times to allow resending the file if it fails before giving up
     fn send_file(&self, path: &PathBuf, retries: u32) -> D4FTResult<()> {
-        let file_data = path.metadata()
+        let file_data = path
+            .metadata()
             .map_err(|source| D4FTError::FileError { source })?;
         if !file_data.is_file() {
-            return Err(D4FTError::FileError { source: std::io::Error::from(std::io::ErrorKind::IsADirectory) })
+            return Err(D4FTError::FileError {
+                source: std::io::Error::from(std::io::ErrorKind::IsADirectory),
+            });
         }
 
         let mut hasher = Sha256::new();
         io::copy(
-            &mut File::open(&path)
-                .map_err(|source| D4FTError::FileError { source })?,
+            &mut File::open(&path).map_err(|source| D4FTError::FileError { source })?,
             &mut hasher,
         )
-            .map_err(|source| D4FTError::FileError { source })?;
+        .map_err(|source| D4FTError::FileError { source })?;
         let hash = hex::encode_upper(hasher.finalize());
 
-        self.send_message(&json::FileList { file_list: vec![json::FileType::File {
-            path: path.clone(),
-            length: file_data.len().to_string(),
-            hash: Some(hash.clone()),
-            verify_immediately: true,
-            remaining_tries: retries,
-        }] })?;
+        self.send_message(&json::FileList {
+            file_list: vec![json::FileType::File {
+                path: path.clone(),
+                length: file_data.len().to_string(),
+                hash: Some(hash.clone()),
+                verify_immediately: true,
+                remaining_tries: retries,
+            }],
+        })?;
 
         let response = self.receive_message::<json::FileListResponse>()?;
         let disagreed_error = Err(D4FTError::PacketStructureError {
@@ -183,8 +190,14 @@ pub trait Connection {
             if list.len() == 1
                 // Not sure if I can do File { path: path } but this is easier to read
                 && matches!(&list[0], json::MinimalFileType::File { path: p } if p == path)
-            { Ok(()) } else { disagreed_error }
-        } else { disagreed_error }
+            {
+                Ok(())
+            } else {
+                disagreed_error
+            }
+        } else {
+            disagreed_error
+        }
     }
 
     // TODO: finish this
@@ -193,9 +206,8 @@ pub trait Connection {
         let file_list = message.file_list;
         println!("{:?}", file_list);
 
-        let response_list: Vec<json::MinimalFileType> = file_list.iter()
-            .map(json::MinimalFileType::from)
-            .collect();
+        let response_list: Vec<json::MinimalFileType> =
+            file_list.iter().map(json::MinimalFileType::from).collect();
 
         self.send_message(&json::FileListResponse {
             confirm_file_list: Some(response_list),
