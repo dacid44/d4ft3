@@ -12,3 +12,5 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 d4ft3 = { path = "../d4ft3" }
 libc = "0.2"
+lazy_static = "1.4"
+cancellable-io = "0.1"

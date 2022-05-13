@@ -14,15 +14,6 @@ use std::fs::File;
 use std::io;
 use std::path::PathBuf;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
-
 /// Represents the possible transfer modes of the application.
 #[derive(Clone, PartialEq)]
 pub enum TransferMode {

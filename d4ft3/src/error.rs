@@ -65,6 +65,10 @@ pub enum D4FTError {
     /// Represents an error encountered while reading or writing a file.
     #[error("File I/O error")]
     FileError { source: io::Error },
+
+    /// Raised when a network operation was cancelled.
+    #[error("Operation cancelled: {msg}")]
+    Cancelled { msg: String },
 }
 
 pub type D4FTResult<T> = Result<T, D4FTError>;

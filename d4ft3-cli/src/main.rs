@@ -13,13 +13,18 @@ fn main() -> D4FTResult<()> {
         ConnectionType::from(if opts.is_client {
             ChaChaPoly1305Socket::connect(opts.address, TransferMode::from(&opts.mode), password)?
         } else {
-            ChaChaPoly1305Socket::listen(opts.address, TransferMode::from(&opts.mode), password)?
+            ChaChaPoly1305Socket::listen(
+                opts.address,
+                TransferMode::from(&opts.mode),
+                password,
+                None,
+            )?
         })
     } else {
         ConnectionType::from(if opts.is_client {
             UnencryptedSocket::connect(opts.address, TransferMode::from(&opts.mode))?
         } else {
-            UnencryptedSocket::listen(opts.address, TransferMode::from(&opts.mode))?
+            UnencryptedSocket::listen(opts.address, TransferMode::from(&opts.mode), None)?
         })
     };
     println!("connected");

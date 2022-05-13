@@ -11,7 +11,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::net::ToSocketAddrs;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::{Sender, SyncSender};
+use cancellable_io::{TcpListener, TcpStream, Canceller, is_cancelled};
 
 fn read_plaintext_message(socket: &mut TcpStream) -> D4FTResult<Vec<u8>> {
     let mut buffer = [0_u8; 8];
@@ -84,7 +88,7 @@ fn start_connect<T: ToSocketAddrs>(
 ) -> D4FTResult<TcpStream> {
     // TODO: Resolve DNS
     // Connect socket
-    let mut socket =
+    let (mut socket, _) =
         TcpStream::connect(address).map_err(|source| D4FTError::ConnectionFailure { source })?;
 
     // Send encryption setup
@@ -112,12 +116,27 @@ fn start_connect<T: ToSocketAddrs>(
 fn start_listen<T: ToSocketAddrs, Iv, F: FnOnce(json::EncryptionSetup) -> Option<Iv>>(
     address: T,
     iv_extraction_fn: F,
+    canceller_sender: Option<Sender<Canceller>>,
 ) -> D4FTResult<(TcpStream, Iv)> {
     // TODO: Resolve DNS
     // Bind socket
-    let (mut socket, _) = TcpListener::bind(address)
+    // let (mut socket, _) = TcpListener::bind(address)
+    //     .and_then(|l| l.accept())
+    //     .map_err(|source| D4FTError::ConnectionFailure { source })?;
+
+    let (mut socket, _, _) = TcpListener::bind(address)
+        .map(|(l, c)| {
+            if let Some(cs) = canceller_sender {
+                cs.send(c).ok(); // If the receiver has hung up that's its problem
+            }
+            l
+        })
         .and_then(|l| l.accept())
-        .map_err(|source| D4FTError::ConnectionFailure { source })?;
+        .map_err(|source| if is_cancelled(&source) {
+            D4FTError::Cancelled { msg: "listen".to_string() }
+        } else {
+            D4FTError::ConnectionFailure { source }
+        })?;
 
     // Receive encryption setup
     let message =
@@ -193,12 +212,16 @@ impl UnencryptedSocket {
     }
 
     /// Open a port and listen for a connection from a peer.
-    pub fn listen<T: ToSocketAddrs>(address: T, mode: TransferMode) -> D4FTResult<Self> {
+    pub fn listen<T: ToSocketAddrs>(
+        address: T,
+        mode: TransferMode,
+        canceller_sender: Option<Sender<Canceller>>,
+    ) -> D4FTResult<Self> {
         // Bind socket
         let (mut socket, _) = start_listen(address, |setup| match setup {
             json::EncryptionSetup::Unencrypted => Some(()),
             _ => None,
-        })?;
+        }, canceller_sender)?;
 
         // Receive transfer setup
         let message =
@@ -346,6 +369,7 @@ impl ChaChaSocket {
         address: T,
         mode: TransferMode,
         password: String,
+        canceller_sender: Option<Sender<Canceller>>,
     ) -> D4FTResult<Self> {
         // Bind socket
         let (socket, (nonce, salt)) = start_listen(address, |setup| {
@@ -354,7 +378,7 @@ impl ChaChaSocket {
             } else {
                 None
             }
-        })?;
+        }, canceller_sender)?;
 
         // Set up ciphers
         let socket = Self::from_iv(
@@ -550,6 +574,7 @@ impl ChaChaPoly1305Socket {
         address: T,
         mode: TransferMode,
         password: String,
+        canceller_sender: Option<Sender<Canceller>>,
     ) -> D4FTResult<Self> {
         // Bind socket
         let (socket, (nonce, salt)) = start_listen(address, |setup| {
@@ -558,7 +583,7 @@ impl ChaChaPoly1305Socket {
             } else {
                 None
             }
-        })?;
+        }, canceller_sender)?;
 
         // Set up ciphers
         let socket = Self::from_iv(
