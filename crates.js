@@ -1,0 +1,1 @@
+window.ALL_CRATES = ["d4ft3_cli"];
