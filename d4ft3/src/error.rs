@@ -14,6 +14,10 @@ pub enum D4FTError {
     #[error("Communication failure")]
     CommunicationFailure { source: io::Error },
 
+    /// Represents a failure in domain resolution.
+    #[error("Domain resolution error: {msg}")]
+    ResolutionError { msg: String },
+
     /// Represents a failure to decode UTF8 data.
     #[error("Unicode error")]
     UnicodeError {

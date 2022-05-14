@@ -10,11 +10,13 @@ use scrypt::scrypt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::cell::RefCell;
-use std::io::{Read, Write};
+use std::{io, thread};
+use std::io::{ErrorKind, Read, Write};
 use std::net::ToSocketAddrs;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, SyncSender};
+use std::time::Duration;
 use cancellable_io::{TcpListener, TcpStream, Canceller, is_cancelled};
 
 fn read_plaintext_message(socket: &mut TcpStream) -> D4FTResult<Vec<u8>> {
@@ -88,13 +90,24 @@ fn start_connect<T: ToSocketAddrs>(
 ) -> D4FTResult<TcpStream> {
     // TODO: Resolve DNS
     // Connect socket
+    // let address = address.to_socket_addrs()
+    //     .map_err(|source| D4FTError::ConnectionFailure { source })?
+    //     .skip(2).next().ok_or(D4FTError::ResolutionError {
+    //     msg: "could not resolve hostname".to_string(),
+    // })?;
+    // println!("{:?}", address);
     let (mut socket, _) =
         TcpStream::connect(address).map_err(|source| D4FTError::ConnectionFailure { source })?;
 
+    // thread::sleep(Duration::from_millis(1000));
+
     // Send encryption setup
-    socket
+    // TODO: testing this, put err?' back on the same line
+    let err = socket
         .write_all(&build_message(setup).expect("This should be successful"))
-        .map_err(|source| D4FTError::CommunicationFailure { source })?;
+        .map_err(|source| D4FTError::CommunicationFailure { source });
+
+    err?;
 
     // Receive encryption setup response
     let response = serde_json::from_slice::<json::EncryptionSetupResponse>(

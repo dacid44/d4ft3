@@ -106,6 +106,9 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light.copyWith(
+      systemNavigationBarColor: Theme.of(context).canvasColor,
+    ));
     // This method is rerun every time setState is called, for instance as done
     // by the _incrementCounter method above.
     //
